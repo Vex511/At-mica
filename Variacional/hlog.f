@@ -1,0 +1,904 @@
+C
+C			PROGRAMA HLOG.FOR
+C
+C	+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+C	Programa principal para el calculo de las autoenergias y 
+C	autofunciones (L=0) del atomo de helio. Se utilizan coordenadas de 
+C	Konishita (S=r1+r2,T=r1-r2,U=r12) y se incluyen potencias del 
+C	logaritmo de la variable S. Es preciso trabajar en cuadruple 
+C	precision cuando se incluyen potencias del logaritmo de S mayores 
+C	o iguales a 2.
+C			VERSION DOBLE PRECISION
+C	+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+C
+
+C
+	IMPLICIT REAL*8(A-H,O-Z)
+	PARAMETER (KMAX=50,JMAX=10,NXDIM=200)
+	DIMENSION VENER(NXDIM,NXDIM),OV(NXDIM),EIG(NXDIM)
+	DIMENSION A(NXDIM,NXDIM),B(NXDIM,NXDIM),EVEC(NXDIM,NXDIM)
+C
+	COMMON /IGRAL/ T(0:KMAX,0:JMAX)
+	COMMON /MONOM/ N1,N2,N3,M1,N1SUM,N2SUM,N3SUM,M1SUM
+        common /zval/ zeta
+	COMMON /PVAR/ ALFA,ALF2,DALF
+C
+        write(*,*)'dime la carga nuclear'
+        read(*,*)zeta
+        write(*,*) 'funcion prueba de Hylleraas'
+        write(*,*) "s=r_1+r_2, t=r_1-r_2, u=r_{12}"
+        write(*,*) "exp(-k*s)*suma (s^l t^{2*m} u^{n})"
+      write(*,*)"suma= sum_{l=0,lmax} sum_{m=0,m_max/2} sum_{n=0,n_max}"
+	WRITE(*,*) 'entre k (1.85)'
+	READ(*,*) ALFA
+	ALF2=ALFA*ALFA
+	DALF=2.D0*ALFA
+C
+	WRITE(*,*) 'Exponentes maximos monomios'
+        write(*,*) 'l_max,m_max (debe ser par), n_max  (6,4,6)'
+        read(*,*) nxs,nxt,nxu
+        mxs=0
+CWRITE(*,*) '... de S,log(S),T (par),U  (6,0,4,6)'
+cREAD(*,*) NXS,MXS,NXT,NXU
+	NXT2=NXT/2
+	NXT=2*NXT2
+	NDIM=(NXS+1)*(MXS+1)*(NXU+1)*(NXT2+1)
+	WRITE(*,*) 'Dimension de las matrices =',NDIM
+	IF(NDIM.GT.NXDIM) STOP
+C
+cWRITE(*,*) 'Numero de autovalores deseados'
+cREAD(*,*) NEIG
+        neig=1
+	IF(NEIG.GT.NDIM) NEIG=NDIM
+C
+	CALL KLEN(DALF)
+C 	CALL RLOG(DALF,KMAX,JMAX)
+C
+	IR=0
+	DO 10 N1=0,NXS
+	DO 10 M1=0,MXS
+	DO 10 N2=0,NXU
+	DO 10 N3=0,NXT,2
+	IR=IR+1
+C
+	IL=0
+	DO 10 N1P=0,NXS
+	N1SUM=N1+N1P
+	DO 10 M1P=0,MXS
+	M1SUM=M1+M1P
+	DO 10 N2P=0,NXU
+	N2SUM=N2+N2P
+	DO 10 N3P=0,NXT,2
+	N3SUM=N3+N3P
+	IL=IL+1
+C
+	IF(IL.GT.IR) GOTO 10
+	HKVAL=0.D0
+	HVVAL=0.D0
+	HNVAL=0.D0
+C
+	CALL HLOG(HKVAL,HVVAL,HNVAL)
+C
+	B(IL,IR)=HNVAL
+	B(IR,IL)=HNVAL
+C
+	VENER(IL,IR)=HKVAL+HVVAL
+	IF(IL.EQ.IR) THEN
+	OV(IL)=HNVAL
+	ELSE
+	VENER(IR,IL)=HNVAL
+	END IF
+C
+ 10	CONTINUE
+C
+	DETB= DETD (B,A,NDIM,NXDIM)
+cWRITE(*,*) 'DETERMINANTE NORMA',DETB
+C
+CWRITE(*,*) NDIM,IR,IL
+C
+	CALL OPTIMIZD(NDIM,VENER,OV,NEIG,EIG)
+
+	WRITE(*,*) 'Energia estado fundamental = ',EIG(1)
+
+cCALL EIGVEC(NXDIM,NDIM,1,VENER,OV,EIG,EVEC)
+C
+cDO 20 IEG=1,NEIG
+cWRITE(20,*) 'AUTOVALOR(',IEG,') = ',EIG(IEG)
+c20	CONTINUE
+C
+cSUM=0.D0
+cDO 22 IEG=1,NDIM
+c22	SUM=SUM+EVEC(1,IEG)**2	
+cSUM=DSQRT(SUM)
+cDO 21 IEG=1,NDIM
+cWRITE(20,*) EVEC(1,IEG)/SUM
+c21	CONTINUE
+C
+	STOP	
+	END
+C
+C			PROGRAMA HLOG.FOR
+C
+C	++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+C	Valor esperado del hamiltoniano dl atomo de helio estado L=0
+C	en una base construida con combinaciones de funciones del tipo
+C	en la parametrizacion de Konishita:
+C
+C	 <s,t,u!n,m,l,j> = s**n*t**m*u**l*[ln(s)]**j*exp(-A*s)	
+C
+C	donde A es un parametro libre.
+C	++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+C	
+	SUBROUTINE HLOG(HKVAL,HVVAL,HNVAL)
+	IMPLICIT REAL*8(A-H,O-Z)
+	PARAMETER (KMAX=50,JMAX=10)
+C
+	DATA HM/1.D0/,E2/1.D0/,Z/2.D0/
+C
+	COMMON /IGRAL/ T(0:KMAX,0:JMAX)
+	COMMON /MONOM/ N1,L1,M1,J1,NP,LP,MP,JP
+        common /zval/ zeta
+	COMMON /PVAR/ ALFA,ALF2,DALF
+C
+	DN1=N1
+	DL1=L1
+	DM1=M1
+	DJ1=J1
+	DNP=NP
+	DLP=LP
+	DMP=MP
+	DJP=JP
+C
+C					;Norma
+	HNVAL=FW(2,0,0,0)-FW(0,2,0,0)
+C
+C					;Energia potencial.
+CZE2=Z*E2
+        ze2=zeta*E2
+	HVVAL=-4.D0*ZE2*FW(1,0,0,0)
+     >	     +E2*(FW(2,0,-1,0)-FW(0,2,-1,0))
+C
+C		;Energia cinetica
+	TU=DL1*(DL1+1.E0)*(FW(2,0,-2,0)-FW(0,2,-2,0))
+	TS=ALF2*(FW(2,0,0,0)-FW(0,2,0,0))
+     >	  -2.E0*ALFA*(2.E0+DN1)*FW(1,0,0,0)+2.E0*ALFA*DN1*FW(-1,2,0,0)
+     >	  +DN1*(DN1+3.E0)*FW(0,0,0,0)-DN1*(DN1-1.E0)*FW(-2,2,0,0)
+     >	  -2.E0*ALFA*DJ1*(FW(1,0,0,-1)-FW(-1,2,0,-1))
+     >	  +DJ1*(2.E0*DN1+3.E0)*FW(0,0,0,-1)
+     >	  -DJ1*(2.E0*DN1-1.E0)*FW(-2,2,0,-1)
+     >	  +DJ1*(DJ1-1.E0)*(FW(0,0,0,-2)-FW(-2,2,0,-2))
+	TT=DM1*(DM1-1.E0)*FW(2,-2,0,0)-DM1*(DM1+3.E0)*FW(0,0,0,0)
+        TUS=2.D0*DL1*(ALFA*(FW(1,2,-2,0)-FW(1,0,0,0))
+     >	             -DN1*(FW(0,2,-2,0)-FW(0,0,0,0))
+     >	             -DJ1*(FW(0,2,-2,-1)-FW(0,0,0,-1)))
+	TUT=2.D0*DM1*DL1*(FW(2,0,-2,0)-FW(0,0,0,0))
+C
+	HKVAL=-HM*(TU+TS+TT+TUT+TUS)
+C
+	RETURN
+	END
+C
+C			PROGRAMA FW.FOR
+C
+	DOUBLE PRECISION FUNCTION FW(NX,MX,LX,JX)
+	IMPLICIT REAL*8(A-H,O-Z)
+	PARAMETER (KMAX=50,JMAX=10)
+C
+	COMMON /IGRAL/ T(0:KMAX,0:JMAX)
+	COMMON /MONOM/ N1,L1,M1,J1,NP,LP,MP,JP
+C
+	FW=0.D0
+	MT1=MP+MX+1
+	MLT=LP+LX+MT1+2
+	KT=NP+NX+MLT
+	JT=JP+JX
+	DMLT=MLT
+	DMT1=MT1
+	IF(KT.LT.0.OR.JT.LT.0) RETURN
+	FW=(2.D0/DMT1/DMLT)*T(KT,JT)
+C
+	RETURN
+	END
+C
+C			RLOG.FOR
+C
+C	+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+C	Atomo de Helio.
+C	Relacion de recurrencion para integrales con terminos logaritmicos
+C	procedimiento utilizado por 
+C	Frankowski K. & Pikeris C.L.;Phys.Rev.146,46(1966).
+C	+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+C
+	SUBROUTINE RLOG(ALFA,KX,JX)
+	IMPLICIT REAL*8(A-H,O-Z)
+	PARAMETER (KMAX=50,JMAX=10)
+	DIMENSION FI(0:JMAX),COMB(0:JMAX,0:JMAX),T1(1,0:JMAX)
+C
+	COMMON /IGRAL/ T(0:KMAX,0:JMAX)
+C
+	DATA CEULER/0.577215664901532860606512E0/
+C
+	IF(JX.GT.10) THEN
+	WRITE(*,*) 'JX = ',JX,'> 10'
+	STOP
+	END IF
+C
+	CALL FCOMB(JMAX,COMB)
+	CALL FZETA(JMAX,FI)
+C
+C		;T1(K,J)  -> T(K,J) con ALFA=1.
+	T1(1,0)=1.D0
+	T1(1,1)=FI(0)
+	DO 201 J=2,JX
+	J1=J-1
+	SUM=0.D0
+	DO 211 I=0,J1
+	SUM=SUM+COMB(J1,I)*T1(1,J1-I)*FI(I)
+ 211	CONTINUE
+	T1(1,J)=SUM
+ 201	CONTINUE
+C
+C				;Integrales con ALFA distinto de uno.
+C				;T(K,0), K=0,1,2,...
+	T(0,0)=1.D0/ALFA
+	DO 10 K=1,KX
+	T(K,0)=K*T(K-1,0)/ALFA
+ 10	CONTINUE
+C
+C				;T(1,J), J=1,2,3,...
+	DALF=-DLOG(ALFA)
+	DO 20 J=1,JX
+	DLA=1.D0
+	SUM=0.D0
+	DO 21 L=0,J
+	SUM=SUM+COMB(J,L)*DLA*T1(1,J-L)
+	DLA=DLA*DALF
+ 21	CONTINUE
+	T(1,J)=SUM/ALFA/ALFA
+ 20	CONTINUE
+C
+C				;T(0,J), J=1,2,3,....
+	T(0,1)=-(CEULER-DALF)/ALFA
+	DO 30 J=2,JX
+	J1=J-1
+	T(0,J)=ALFA*T(1,J)-J*T(0,J1)
+ 30	CONTINUE
+C
+C				;T(K,J), K=2,3,... & J=1,2,...
+	DO 40 K=2,KX
+	K1=K-1
+	DO 40 J=1,JX
+	J1=J-1
+	T(K,J)=(K*T(K1,J)+J*T(K1,J1))/ALFA
+ 40	CONTINUE
+C
+C	WRITE(*,*) KX
+C	DO 44 I=0,KX
+C	WRITE(20,*) (T(I,LL),LL=0,4)
+C 44	CONTINUE
+C
+	RETURN
+	END
+C
+C			PROGRAMA FCOMB.FOR
+C
+	SUBROUTINE FCOMB(JMAX,COMB)
+	IMPLICIT REAL*8(A-H,O-Z)
+	DIMENSION COMB(0:JMAX,0:JMAX)
+C
+	DO 10 N=0,JMAX
+	COMB(N,0)=1.D0
+	DO 10 M=1,N
+	COMB(N,M)=(N-M+1)*COMB(N,M-1)/M
+ 10	CONTINUE
+C
+	RETURN
+	END
+C
+C			PROGRAMA FZETA.FOR
+C
+	SUBROUTINE FZETA(JMAX,FI)
+	IMPLICIT REAL*8(A-H,O-Z)
+	PARAMETER (JJMAX=20)
+	DIMENSION ZETA(0:JJMAX),FI(0:JMAX)
+C
+	DATA ZETA(1)/0.422784335098467139393488E0/
+	DATA ZETA(2)/0.644934066848226436472414765276668E0/
+	DATA ZETA(3)/2.0205690315959428540E-1/
+	DATA ZETA(4)/8.232323371113819151600316836026528E-2/
+	DATA ZETA(5)/3.692775514336992633E-2/
+	DATA ZETA(6)/1.734306198444913971451718508569725E-2/
+	DATA ZETA(7)/8.34927738192282684E-3/
+	DATA ZETA(8)/4.077356197944339378684258515859307E-3/
+	DATA ZETA(9)/2.00839282608221442E-3/
+	DATA ZETA(10)/9.945751278180853371459589003189776E-4/
+	DATA ZETA(11)/4.941886041194645587022825264699298E-4/
+	DATA ZETA(12)/2.460865533080482986379980477396688E-4/
+	DATA ZETA(13)/1.227133475784891467518365263573954E-4/
+	DATA ZETA(14)/6.124813505870482925854510513533358E-5/
+	DATA ZETA(15)/3.058823630702049355172851064506249E-5/
+	DATA ZETA(16)/1.528225940865187173257148763672201E-5/
+	DATA ZETA(17)/7.637197637899762273600293563029200E-6/
+	DATA ZETA(18)/3.817293264999839856461644621939727E-6/
+	DATA ZETA(19)/1.908212716553938925656957795101354E-6/
+	DATA ZETA(20)/9.539620338727961131520386834493461E-7/
+C
+	JMAX1=JMAX+1
+C
+C		;Formacion de FI(j)=[gamma(x)]**(-1)*dj[gamma(x)]/djx.
+	FI(0)=ZETA(1)
+	FACT=-1.E0
+	DO 60 L=1,JMAX
+	FACT=-L*FACT
+	FI(L)=FACT*ZETA(L+1)
+ 60	CONTINUE
+C
+	RETURN
+	END
+C
+C			PROGRAMA KLEN.FOR
+C
+C	++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+C	Alternativa para el calculo de las integrales utilizada por:
+C	Kleindienst,H & Emrich,R.; Jour.Inter.Quan.Chem.,257(1990)
+C	++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+C
+	SUBROUTINE KLEN(ALFA)
+	IMPLICIT REAL*8(A-H,O-Z)
+	PARAMETER (KMAX=50,JMAX=10,JJMAX=20)
+	DIMENSION ZETA(JJMAX)
+C
+	COMMON /IGRAL/ T(0:KMAX,0:JMAX)
+C
+	DATA ZETA(1)/0.422784335098467139393488E0/
+	DATA ZETA(2)/0.644934066848226436472414765276668E0/
+	DATA ZETA(3)/2.0205690315959428540E-1/
+	DATA ZETA(4)/8.232323371113819151600316836026528E-2/
+	DATA ZETA(5)/3.692775514336992633E-2/
+	DATA ZETA(6)/1.734306198444913971451718508569725E-2/
+	DATA ZETA(7)/8.34927738192282684E-3/
+	DATA ZETA(8)/4.077356197944339378684258515859307E-3/
+	DATA ZETA(9)/2.00839282608221442E-3/
+	DATA ZETA(10)/9.945751278180853371459589003189776E-4/
+	DATA ZETA(11)/4.941886041194645587022825264699298E-4/
+	DATA ZETA(12)/2.460865533080482986379980477396688E-4/
+	DATA ZETA(13)/1.227133475784891467518365263573954E-4/
+	DATA ZETA(14)/6.124813505870482925854510513533358E-5/
+	DATA ZETA(15)/3.058823630702049355172851064506249E-5/
+	DATA ZETA(16)/1.528225940865187173257148763672201E-5/
+	DATA ZETA(17)/7.637197637899762273600293563029200E-6/
+	DATA ZETA(18)/3.817293264999839856461644621939727E-6/
+	DATA ZETA(19)/1.908212716553938925656957795101354E-6/
+	DATA ZETA(20)/9.539620338727961131520386834493461E-7/
+C
+	DALF=DLOG(ALFA)
+C
+	T(0,0)=1.E0/ALFA
+	DO 10 K=1,50
+ 10	T(K,0)=K*T(K-1,0)/ALFA
+C
+	DO 20 K=0,50
+	DK=K
+	IF(K.EQ.0) THEN
+	DELTA=ZETA(1)-1.E0-DALF
+	Z2=ZETA(2)+1.E0
+	Z3=ZETA(3)+1.E0
+	Z4=ZETA(4)+1.E0
+	Z5=ZETA(5)+1.E0
+	Z6=ZETA(6)+1.E0
+	Z7=ZETA(7)+1.E0
+	Z8=ZETA(8)+1.E0
+	ELSE
+	DELTA=DELTA+1.E0/DK
+	DK2=DK*DK
+	DK4=DK2*DK2
+	Z2=Z2-1.E0/DK2
+	Z3=Z3-1.E0/DK2/DK
+	Z4=Z4-1.E0/DK4
+	Z5=Z5-1.E0/DK4/DK
+	Z6=Z6-1.E0/DK4/DK2
+	Z7=Z7-1.E0/DK4/DK2/DK
+	Z8=Z8-1.E0/DK4/DK4
+	END IF
+C
+	DEL2=DELTA*DELTA
+	DEL3=DEL2*DELTA
+	DEL4=DEL2*DEL2
+	DEL5=DEL4*DELTA
+	DEL6=DEL4*DEL2
+	DEL7=DEL6*DELTA
+	DEL8=DEL6*DEL2
+C
+	T(K,1)=T(K,0)*DELTA
+	T(K,2)=T(K,0)*(DEL2+Z2)
+	T(K,3)=T(K,0)*(DEL3+3.E0*Z2*DELTA-2.E0*Z3)
+	T(K,4)=T(K,0)*(DEL4+6.E0*Z2*DEL2-8.E0*Z3*DELTA
+     >	              +6.E0*Z4+3.E0*Z2*Z2)
+	T(K,5)=T(K,0)*(DEL5+10.E0*Z2*DEL3-20.E0*Z3*DEL2+30.E0*Z4*DELTA
+     >	              +15.E0*Z2*Z2*DELTA-20.E0*Z2*Z3-24.E0*Z5)
+	T(K,6)=T(K,0)*(DEL6+15.E0*Z2*DEL4-40.E0*Z3*DEL3+90.E0*Z4*DEL2
+     >	              -144.E0*Z5*DELTA+120.E0*Z6+45.E0*Z2*Z2*DEL2
+     >	              +40.E0*Z3*Z3-120.E0*Z2*Z3*DELTA+90.E0*Z2*Z4
+     >	              +15.E0*Z2*Z2*Z2)
+ 20	CONTINUE
+C
+	RETURN
+	END
+C
+C			RUTINA OPTIMIZ.FOR
+C		      GENERAL DIAGONALIZATION
+C
+	SUBROUTINE OPTIMIZD(NX1,VENER,OV,NEIG,EIGENV)
+	IMPLICIT REAL*8(A-H,O-Z)
+	PARAMETER (NDIM=200)
+	DIMENSION VENER(NDIM,NDIM),OV(NDIM),EIGENV(NDIM),
+     >	          DELMT(NDIM),UDELMT(NDIM),VENX(NDIM,NDIM),OVX(NDIM),
+     >	          EIGX(NDIM)
+C
+	DO 10 I1=1,NX1
+	OVX(I1)=OV(I1)
+	DO 10 I2=1,NX1
+	VENX(I1,I2)=VENER(I1,I2)
+ 10	CONTINUE
+C
+	CALL CHOLESKYD(VENX,OVX,NDIM,NX1)
+C
+	CALL HOUSED(VENX,DELMT,UDELMT,NDIM,NX1)
+	CALL TRIDIAD(DELMT,UDELMT,NX1,NEIG,EIGX)
+C
+	DO 11 I1=1,NEIG
+	EIGENV(I1)=EIGX(I1)
+ 11	CONTINUE
+C
+	RETURN	
+	END
+C
+C	TRANSFORMA EL PROBLEMA V.P.  H.X=E.O.X EN H'.X=E.X
+C	H Y O SON MATRICES SIMETRICAS QUE ENTRAN ASI:
+C	H SE GUARDA EN H(I,J) PARA I MENOR O IGUAL A J (TRIANG. SUPERIOR)
+C	O SE GUARDA EN H(I,J) PARA I MAYOR QUE J
+C	O(I,I) ESTA EN OV(I)
+C
+C	A LA SALIDA EL TRIANGULO SUPERIOR CONTIENE LA H TRANSFORMADA
+C	LA INFORMACION DEL TRIANGULO INFERIOR SE PIERDE
+C
+C	FASE UNO: DESCOMPOSICION CHOLESKY DEL OVERLAP = L*L(TRANS)
+C
+	subroutine CHOLESKYD (H,OV,NM,N)
+	IMPLICIT REAL*8 (A-H,O-Z)
+	DIMENSION H(NM,NM),OV(NM)
+C
+	OV(1)=DSQRT(OV(1))
+	DO 140 K=2,N
+	T=OV(K)
+	DO 115 I=1,K-1
+	S=H(K,I)
+	IF (I.EQ.1) GOTO 110
+	DO 105 J=1,I-1
+105	S=S-H(I,J)*H(K,J)
+110	H(K,I)=S/OV(I)
+115	CONTINUE
+	DO 120 J=1,K-1
+	Z=H(K,J)
+120	T=T-Z*Z
+	OV(K)=DSQRT(T)
+140	CONTINUE
+C
+C	INVERSION MATRIZ L
+C
+	DO 250 K=N,2,-1
+	OV(K)=1./OV(K)
+	H(K,K-1)=-OV(K)*H(K,K-1)/OV(K-1)
+	IF (K.EQ.2) GOTO 250
+	DO 240 I=K-2,1,-1
+	S=OV(K)*H(K,I)
+	DO 230 J=I+1,K-1
+230	S=S+H(K,J)*H(J,I)
+240	H(K,I)=-S/OV(I)
+250	CONTINUE
+	OV(1)=1.E0/OV(1)
+C
+C	MULTIPLICA H POR L INVERSA Y TRANSPUESTA
+C
+	DO 330 J=N,2,-1
+	Z=OV(J)
+	DO 320 I=J,1,-1
+	S=Z*H(I,J)
+	DO 310 K=1,J-1
+	Q=H(I,K)
+	IF(I.GT.K) Q=H(K,I)
+310	S=S+Q*H(J,K)
+320	H(I,J)=S
+330	CONTINUE
+	H(1,1)=OV(1)*H(1,1)
+C
+C	MULTIPLICA L INVERSA POR H ANTERIOR
+C
+	DO 430 J=N,2,-1
+	DO 420 I=J,1,-1
+	S=OV(I)*H(I,J)
+	IF (I.EQ.1) GOTO 420
+	DO 410 K=1,I-1
+	Q=H(K,J)
+	IF (K.GT.J) Q=H(J,K)
+410	S=S+Q*H(I,K)
+420	H(I,J)=S
+430	CONTINUE
+440	H(1,1)=OV(1)*H(1,1)
+	RETURN
+	END
+C	TRIDIAGONALIZA LA MATRIZ SIMETRICA A
+C	SALIDA  ...  DIAGONAL  ...  D (1,... N)
+C	        UPPERDIAGONAL  ...  E (1,...,N-1)
+C	ALGORITMO DE HOUSEHOLDER
+C
+C	SOLO USA LA PARTE SUPERIOR DE A
+C
+	subroutine HOUSED (A,D,E,NM,N)
+	IMPLICIT REAL*8 (A-H,O-Z)
+	DIMENSION A(NM,NM),D(NM),E(NM)
+	DOUBLE PRECISION K2
+C
+	DO 2330 J=1,N-2
+	JP=J+1
+	S=0.E0
+	DO 2130 I=JP,N
+	S1=A(J,I)
+2130	S=S+S1*S1
+	S1=A(J,JP)
+	S=DSQRT(S)
+	IF(S1.LT.0.E0) S=-S
+	E(JP)=S1+S
+	DO 2160 I=J+2,N
+2160	E(I)=A(J,I)
+	K2=S*(S+S1)
+	A(J,JP)=-S
+	S1=0.E0
+	DO 2260 I=JP,N
+	S=0.E0
+	DO 2210 K=JP,I
+2210	S=S+A(K,I)*E(K)
+	IF (I.EQ.N) GOTO 2240
+	DO 2230 K=I+1,N
+2230	S=S+A(I,K)*E(K)
+2240	S=S/K2
+	S1=S1+E(I)*S
+2260	D(I)=S
+	S1=-0.5E0*S1/K2
+	DO 2280 I=JP,N
+2280	D(I)=D(I)+E(I)*S1
+	DO 2320 I=JP,N
+	S=-E(I)
+	S1=-D(I)
+	DO 2320 K=I,N
+	A(I,K)=A(I,K)+S*D(K)+S1*E(K)
+2320	CONTINUE
+2330	CONTINUE
+	DO 2345 I=1,N-1
+	D(I)=A(I,I)
+2345	E(I)=A(I,I+1)
+	D(N)=A(N,N)
+	RETURN
+	END
+C
+C	DETERMINA VALORES PROPIOS MATRIZ TRIDIAGONAL DEFINIDA POR (D,E)
+C	
+C	W ... CONTIENE LOS VALORES PROPIOS
+C	N ... DIMENSION MATRIZ
+C	NV .. NUMERO VALORES PROPIOS DESEADOS
+C	      ORDENADOS DE MENOR A MAYOR
+C
+C	OJO, E SE DESTRUYE
+C
+	subroutine TRIDIAD (D,E,N,NV,W)
+	IMPLICIT REAL*8 (A-H,O-Z)
+	DIMENSION D(N),E(N),W(NV)
+c
+	NB=52 
+	S=0.E0
+	DO 1140 I=1,N
+1140	S=S+D(I)
+	S=S/N
+	DO 1150 I=1,N
+1150	D(I)=D(I)-S
+	XL1=DABS(D(1))+DABS(E(1))
+	XL=DABS(D(N))+DABS(E(N-1))
+	IF (XL1.GT.XL) XL=XL1
+	DO 1200 I=2,N-1
+	XL1=DABS(D(I))+DABS(E(I))+DABS(E(I-1))
+	IF(XL1.GT.XL) XL=XL1
+1200	CONTINUE
+	DO 1210 I=1,N-1
+	X=E(I)
+1210	E(I)=X*X
+	XL1=2.E0*XL/N
+	X0=-XL
+C	ALGORITMO BISECCION
+	DO 1390 I=1,NV
+1240	X=X0+XL1
+	CALL STURMD (D,E,N,X,NC)
+	IF(NC.GE.I) GOTO 1260
+	X0=X
+	GOTO 1240
+1260	IF(NC.EQ.I) GOTO 1310
+	X2=X
+1280	X=0.5E0*(X0+X2)
+	CALL STURMD (D,E,N,X,NC)
+	IF(NC.GE.I) GOTO 1260
+	X0=X
+	GOTO 1280
+1310	X2=X
+	X1=X
+	DO 1360 J=1,NB
+	X=0.5E0*(X0+X2)
+	CALL STURMD (D,E,N,X,NC)
+	IF(I.NE.NC) GOTO 1350
+	X2=X
+	GOTO 1360
+1350	X0=X
+1360	CONTINUE
+	W(I)=0.5E0*(X0+X2)+S
+	X0=X1
+1390	CONTINUE
+	RETURN
+	END
+	SUBROUTINE STURMD (D,E,N,X,NC)
+	IMPLICIT REAL*8 (A-H,O-Z)
+	DIMENSION D(N),E(N)
+	P=D(1)-X
+	J=1
+ 	NC=0
+	GOTO 1000
+900	P=D(J)-X-E(J-1)/P
+1000	IF(P.LE.0.) NC=NC+1
+	J=J+1
+	IF(J.GT.N) RETURN
+	IF(P.NE.0.) GOTO 900
+	J=J+1
+	IF(J.GT.N) RETURN
+	P=D(J)-X
+	GOTO 1000
+	END
+C
+C
+	DOUBLE PRECISION FUNCTION DETD (B,A,N,NMAX)
+C
+C	FUNCION QUE CALCULA EL DETERMINANTE DE UNA MATRIZ
+C	A ....DIMENSIONADA EN PROGRAMA PRINCIPAL
+C	NMAX .DIMENSION M`AXIMA DEL PROGRAMA PRINCIPAL
+C	N ....DIMENSION ACTUAL DE LA MATRIZ
+C	
+	DOUBLE PRECISION B(NMAX,NMAX),A(NMAX,NMAX),CCC,DETERM
+C
+C
+	DO 500 I=1,N
+	DO 500 J=1,N
+ 500	A(I,J)=B(I,J)
+C
+	IF(N.GT.1) GOTO 50
+	DETD=A(1,1)
+	RETURN
+50	CONTINUE
+C
+	DETERM=1.D0
+	NP=N-1
+	DO 10 I=1,NP
+	NN=I
+	IF(DABS(A(I,I))) 31,30,31
+30	CONTINUE
+	JJ=I+1
+	DO 11 J=JJ,N
+	NN=J
+	IF(DABS(A(J,I))) 41,40,41
+40	CONTINUE
+11	CONTINUE
+	DETD=0.D0
+	RETURN
+41	CONTINUE
+	DO 12 J=I,N
+	CCC=A(I,J)
+	A(I,J)=A(NN,J)
+12	A(NN,J)=CCC
+	DETERM=-DETERM
+31	CONTINUE
+	DETERM=DETERM*A(I,I)
+	NN=I+1
+	DO 13 J=NN,N
+	IF(DABS(A(J,I)).EQ.0.D0) GOTO 13
+	DO 14 L=NN,N
+	A(J,L)=A(J,L)-A(I,L)*A(J,I)/A(I,I)
+14	CONTINUE
+13	CONTINUE
+10	CONTINUE
+	DETERM=DETERM*A(N,N)
+	DETD=DETERM
+	RETURN
+	END
+C
+C			RUTINA EIGVEC.FOR
+C
+C	=================================================================
+C	Rutina para la deterinacion de los autovectores de un problema
+C	generalizado de autovalores. 
+C
+C			A.x = Eig B.x
+C
+C	Como input se requiere las matrices simetricas A, B asi como los
+C	autovalores. 
+C
+C	NDIM	 : Dimension fisica de las matrices.
+C	N	 : Dimension del problema concreto.
+C	XMAT(I,J): Matriz que contiene A en la diagonal y los elementos
+C		   no diagonales en los elementos con I<J. Los elementos
+C		   no diagonales de B se acomulan en I>J.
+C	OV(I)	 : Contiene los elementos diagonales de B.
+C	WW(I)	 : Contiene los autovalores.
+C	EVEC(I,J): Contiene los autovectores. I es el indice correspondiente
+C		   al autovector y J sus componentes.
+C	DD(I)	 : A la salida de DLUBKSB contiene el corres. autovector
+C	=================================================================
+C
+	SUBROUTINE EIGVEC(NDIM,N,NEIGV,XMAT,OV,WW,EVEC)
+	IMPLICIT REAL*8(A-H,O-Z)
+	PARAMETER (NMAX=200)
+	DIMENSION XMAT(NDIM,NDIM),OV(NDIM),WW(NDIM),EVEC(NDIM,NDIM),
+     >	          VPOT(NMAX,NMAX),DD(NMAX),INDEX(NMAX)
+C
+	DO 4000 IEIG=1,NEIGV
+C
+C		;Formacion del sistema lineal asociado al autovalor IEIG.
+	DO 3020 I=1,N-1
+	DO 3020 J=I+1,N
+	VPOT(I,J)=XMAT(I,J)-WW(IEIG)*XMAT(J,I)
+ 3020	VPOT(J,I)=VPOT(I,J)
+	DO 3030 I=1,N
+ 3030	VPOT(I,I)=XMAT(I,I)-WW(IEIG)*OV(I)
+C
+C		;Como el sistema tiene determinante nulo se elimina la
+C		 ultima fila, y la ultima columna juega el papel de 
+C		 vector en el sistema C.x=D. Naturalmente la dimension del
+C		 sistema disminuye en una unidad.
+	DO 3040 I=1,N
+ 3040	DD(I)=-VPOT(I,N)
+C
+	DETER=1.D0
+	CALL DLUDCMP(VPOT,N-1,NMAX,INDEX,DETER)
+	CALL DLUBKSB(VPOT,N-1,NMAX,INDEX,DD)
+C
+	DO 3070 I=1,N-1
+ 3070	EVEC(IEIG,I)=DD(I)
+	EVEC(IEIG,N)=1.D0
+C
+ 4000	CONTINUE
+	RETURN
+	END
+C
+C	==============================================================
+C	Given a NxN matrix A, with PHYSICAL dimension NP
+C	the routine replaces it by its Lower-Upper LU
+C	decomposition, with a row-wise ordering given by
+C	INDX (dimensioned at N) and sign exchange D
+C	Used with DLUBKSB to solve linear systems or
+C	inverting a matrix
+C
+C	Parameters
+C	A	matrix dimensioned at (NP,NP), logical NxN
+c	INDX	integer array dimensioned to N at least
+C	D	Real*8 number indicating the sign of permutations
+C
+C	Limitations: N max is 250
+C
+C	A is destroyed
+C	==============================================================
+C
+	SUBROUTINE DLUDCMP(A,N,NP,INDX,D)
+	IMPLICIT REAL*8 (A-H,O-Z)
+	PARAMETER (NMAX=250,TINY=1.0D-20)
+	DIMENSION A(NP,NP),INDX(NP),VV(NMAX)
+	D=1.D0
+	DO 12 I=1,N
+	AAMAX=0.D0
+	DO 11 J=1,N
+	IF (ABS(A(I,J)).GT.AAMAX) AAMAX=ABS(A(I,J))
+11	CONTINUE
+	IF (AAMAX.EQ.0.D0) PAUSE 'Singular matrix.'
+	VV(I)=1.D0/AAMAX
+12	CONTINUE
+	DO 19 J=1,N
+	IF (J.GT.1) THEN
+	DO 14 I=1,J-1
+	SUM=A(I,J)
+	IF (I.GT.1)THEN
+	DO 13 K=1,I-1
+	SUM=SUM-A(I,K)*A(K,J)
+13	CONTINUE
+	A(I,J)=SUM
+	ENDIF
+14	CONTINUE
+	ENDIF
+	AAMAX=0.D0
+	DO 16 I=J,N
+	SUM=A(I,J)
+	IF (J.GT.1)THEN
+	DO 15 K=1,J-1
+	SUM=SUM-A(I,K)*A(K,J)
+15	CONTINUE
+	A(I,J)=SUM
+	ENDIF
+	DUM=VV(I)*ABS(SUM)
+	IF (DUM.GE.AAMAX) THEN
+	IMAX=I
+	AAMAX=DUM
+	ENDIF
+16	CONTINUE
+	IF (J.NE.IMAX)THEN
+	DO 17 K=1,N
+	DUM=A(IMAX,K)
+	A(IMAX,K)=A(J,K)
+	A(J,K)=DUM
+17	CONTINUE
+	D=-D
+	VV(IMAX)=VV(J)
+	ENDIF
+	INDX(J)=IMAX
+	IF(J.NE.N)THEN
+	IF(A(J,J).EQ.0.D0) A(J,J)=TINY
+	DUM=1.D0/A(J,J)
+	DO 18 I=J+1,N
+	A(I,J)=A(I,J)*DUM
+18	CONTINUE
+	ENDIF
+19	CONTINUE
+	IF(A(N,N).EQ.0.D0)A(N,N)=TINY
+	RETURN
+	END
+C
+C	==============================================================
+C	Routine to solve the linear system
+C	A. X = B
+C	where A is the matrix already in LU decomposition form
+C	(see DLUDCMP routine)
+C	and B is the rhs vector.
+C
+C	On output, B contains the solution
+C
+C	The way of solving a system of linear equations is
+C	Call DLUDCMP to change A into its LU decomposition
+C	call afterwards DLUBCKS (backsubstitution)
+C
+C	A	dimensioned at (NP,NP), logical NxN
+C	INDX	order of rows (see DLUDCMP), dimensioned to N
+C	B	Column vector, dimensioned (at least) to N
+C
+C	A is not destroyed, so this routine may be called
+C	many times, per one call of DLUDCMP
+C	==============================================================
+C
+	SUBROUTINE DLUBKSB(A,N,NP,INDX,B)
+	IMPLICIT REAL*8 (A-H,O-Z)
+	DIMENSION A(NP,NP),INDX(NP),B(NP)
+	II=0
+	DO 12 I=1,N
+	LL=INDX(I)
+	SUM=B(LL)
+	B(LL)=B(I)
+	IF (II.NE.0)THEN
+	DO 11 J=II,I-1
+	SUM=SUM-A(I,J)*B(J)
+11	CONTINUE
+	ELSE IF (SUM.NE.0.D0) THEN
+	II=I
+	ENDIF
+	B(I)=SUM
+12	CONTINUE
+	DO 14 I=N,1,-1
+	SUM=B(I)
+	IF(I.LT.N)THEN
+	DO 13 J=I+1,N
+	SUM=SUM-A(I,J)*B(J)
+13	CONTINUE
+	ENDIF
+	B(I)=SUM/A(I,I)
+14	CONTINUE
+	RETURN
+	END
